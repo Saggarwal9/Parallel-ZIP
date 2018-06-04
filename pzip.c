@@ -66,6 +66,11 @@ struct buffer {
     int last_page_size; //Page sized or (size_of_file)%page_size
 }buf[q_capacity];
 
+//Contains file specific data for munmap
+struct fd{
+	char* addr;
+	int size;
+}*files;
 ////////////////////////////////////////////////////////
 
 /////////////////QUEUE Functions////////////////////////
@@ -99,7 +104,8 @@ void* producer(void *arg){
 	int file;
 	
 	//Step 2: Open the file
-	for(int i=0;i<num_files;i++){
+	for(int i=0;i<num_files-1;i++){
+		printf("filename %s\n",filenames[i]);
 		file = open(filenames[i], O_RDONLY);
 		int pages_in_file=0; //Calculates the number of pages in the file. Number of pages = Size of file / Page size.
 		int last_page_size=0; //Variable required if the file is not page-alligned ie Size of File % Page size !=0
@@ -145,13 +151,16 @@ void* producer(void *arg){
 		}
 		//Step 5: Map the entire file.
 		map = mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, file, 0); //If addr is NULL, then the kernel chooses the (page-aligned) address
-       																  //at which to create the mapping. Source: man pages
+		//at which to create the mapping. Source: man pages															  
 		if (map == MAP_FAILED) { //yikes #3,possibly due to no memory? --unmap needed then?
 			close(file);
 			perror("Error mmapping the file\n");
 			exit(1);
     	}	
-
+    	
+    	//Needed for munmap
+    	// files[i].addr=map;
+    	// files[i].size=sb.st_size;
     	//Step 6: For all the pages in file, create a Buffer type data with the relevant information for the consumer.
 		for(int j=0;j<pages_in_file;j++){
 			pthread_mutex_lock(&lock);
@@ -207,7 +216,6 @@ struct output RLECompress(struct buffer temp){
 	}
 	compressed.size=countIndex;
 	compressed.data=realloc(tempString,countIndex);
-	printf("Returning from compressed\n");
 	return compressed;
 }
 
@@ -236,7 +244,6 @@ void *consumer(){
 			pthread_mutex_unlock(&lock);
 			return NULL;
 		}
-		//pthread_mutex_lock(&lock); //Possible race condition while dequeuing file at size.
 		struct buffer temp=get();
 		// if(isComplete==0){
 		// 	pthread_cond_signal(&empty);
@@ -273,6 +280,22 @@ void printOutput(){
 	}
 }
 
+void freeMemory(){
+	// for(int i=0;i<num_files;i++){
+	// 	if(munmap(files[i].addr,files[i].size)){
+	// 		printf("munmap failed\n");
+	// 		exit(1);
+	// 	}
+	// }
+	free(pages_per_file);
+	for(int i=0;i<total_pages;i++){
+		free(out[i].data);
+		free(out[i].count);
+	}
+	free(out);
+
+}
+
 int main(int argc, char* argv[]){
 	//Check if less than two arguments
 	if(argc<2){
@@ -285,6 +308,7 @@ int main(int argc, char* argv[]){
 	num_files=argc-1; //Number of files, needed for producer.
 	total_threads=get_nprocs(); //Number of processes consumer threads 
 	pages_per_file=malloc(sizeof(int)*num_files); //Pages per file.
+	//files=malloc(sizeof(struct fd)*num_files);
 
 	//Create producer thread to map all the files.
 	pthread_t pid,cid[total_threads];
@@ -301,6 +325,7 @@ int main(int argc, char* argv[]){
     }
     pthread_join(pid,NULL);
 	printOutput();
+	//freeMemory();
 	return 0;
 }
 //////////////////////////////////////////////////////////////////////////
