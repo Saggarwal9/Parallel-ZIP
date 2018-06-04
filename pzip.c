@@ -104,7 +104,7 @@ void* producer(void *arg){
 	int file;
 	
 	//Step 2: Open the file
-	for(int i=0;i<num_files-1;i++){
+	for(int i=0;i<num_files;i++){
 		printf("filename %s\n",filenames[i]);
 		file = open(filenames[i], O_RDONLY);
 		int pages_in_file=0; //Calculates the number of pages in the file. Number of pages = Size of file / Page size.
