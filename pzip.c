@@ -119,9 +119,10 @@ void* producer(void *arg){
 			printf("Error: Couldn't retrieve file stats");
 			exit(1);
 		}
-        if(sb.st_size==0){
-            continue;
-        }
+		//Empty files - Test 5
+        	if(sb.st_size==0){
+               		continue;
+        	}
 		//Step 4: Calculate the number of pages and last page size.
 		//st_size contains the size offset. 
 		pages_in_file=(sb.st_size/page_size);
