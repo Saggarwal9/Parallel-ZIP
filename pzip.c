@@ -13,7 +13,6 @@
 //////////////////////NOTES/////////////////////////////
 /*void *mmap(void *addr, size_t length, int prot, int flags,
                   int fd, off_t offset);
-
 Struct stat contains:
 dev_t     st_dev     Device ID of device containing file. 
 ino_t     st_ino     File serial number. 
@@ -27,7 +26,6 @@ dev_t     st_rdev    Device ID (if file is character or block special).
 off_t     st_size    For regular files, the file size in bytes. 
                      For symbolic links, the length in bytes of the 
                      pathname contained in the symbolic link. 
-
 Queue code and logic referenced from Professor Remzi's OS Book:
 http://pages.cs.wisc.edu/~remzi/Classes/537/Spring2018/Book/threads-cv.pdf
 */
@@ -105,7 +103,7 @@ void* producer(void *arg){
 	
 	//Step 2: Open the file
 	for(int i=0;i<num_files;i++){
-		printf("filename %s\n",filenames[i]);
+		//printf("filename %s\n",filenames[i]);
 		file = open(filenames[i], O_RDONLY);
 		int pages_in_file=0; //Calculates the number of pages in the file. Number of pages = Size of file / Page size.
 		int last_page_size=0; //Variable required if the file is not page-alligned ie Size of File % Page size !=0
@@ -121,7 +119,9 @@ void* producer(void *arg){
 			printf("Error: Couldn't retrieve file stats");
 			exit(1);
 		}
-
+        if(sb.st_size==0){
+            continue;
+        }
 		//Step 4: Calculate the number of pages and last page size.
 		//st_size contains the size offset. 
 		pages_in_file=(sb.st_size/page_size);
@@ -136,7 +136,7 @@ void* producer(void *arg){
 		total_pages+=pages_in_file;
 		pages_per_file[i]=pages_in_file;
 		//Compressed output pointer. Re-allocates for every new page.
-		if(out==NULL){
+		/*if(out==NULL){
 			out=malloc(total_pages*sizeof(struct output));
 		}
 		else{
@@ -148,13 +148,13 @@ void* producer(void *arg){
 			else{
 				out=newOut;
 			}
-		}
+		}*/
 		//Step 5: Map the entire file.
 		map = mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, file, 0); //If addr is NULL, then the kernel chooses the (page-aligned) address
 		//at which to create the mapping. Source: man pages															  
 		if (map == MAP_FAILED) { //yikes #3,possibly due to no memory? --unmap needed then?
 			close(file);
-			perror("Error mmapping the file\n");
+			printf("Error mmapping the file\n");
 			exit(1);
     	}	
     	
@@ -165,6 +165,7 @@ void* producer(void *arg){
 		for(int j=0;j<pages_in_file;j++){
 			pthread_mutex_lock(&lock);
 			while(q_size==q_capacity){
+			    pthread_cond_broadcast(&fill); //Wake-up all the sleeping consumer threads.
 				pthread_cond_wait(&empty,&lock); //Call the consumer to start working on the queue.
 			}
 			pthread_mutex_unlock(&lock);
@@ -192,7 +193,7 @@ void* producer(void *arg){
 	isComplete=1; //When producer is done mapping.
 	//Debugging step: Program wasn't ending during some runtimes as consumer threads were waiting for work.
 	pthread_cond_broadcast(&fill); //Wake-up all the sleeping consumer threads.
-	printf("producer exiting with queue_size %d\n",q_size);
+	//printf("producer exiting with queue_size %d\n",q_size);
 	return 0;
 }
 /////////////////////////////////////////////////////////////////////////
@@ -208,7 +209,7 @@ struct output RLECompress(struct buffer temp){
 	for(int i=0;i<temp.last_page_size;i++){
 		tempString[countIndex]=temp.address[i];
 		compressed.count[countIndex]=1;
-		while(temp.address[i]==temp.address[i+1] && i+1<temp.last_page_size){
+		while(i+1<temp.last_page_size && temp.address[i]==temp.address[i+1]){
 			compressed.count[countIndex]++;
 			i++;
 		}
@@ -238,6 +239,7 @@ void *consumer(){
 	do{
 		pthread_mutex_lock(&lock);
 		while(q_size==0 && isComplete==0){
+		    pthread_cond_signal(&empty);
 			pthread_cond_wait(&fill,&lock); //call the producer to start filling the queue.
 		}
 		if(isComplete==1 && q_size==0){ //If producer is done mapping and there's nothing left in the queue.
@@ -245,9 +247,9 @@ void *consumer(){
 			return NULL;
 		}
 		struct buffer temp=get();
-		// if(isComplete==0){
-		// 	pthread_cond_signal(&empty);
-		// }	
+		if(isComplete==0){
+		    pthread_cond_signal(&empty);
+		}	
 		pthread_mutex_unlock(&lock);
 		//Output position calculation
 		int position=calculateOutputPosition(temp);
@@ -260,9 +262,10 @@ void *consumer(){
 
 ///////////////////////////Main/////////////////////////////////////////
 
-
+//https://piazza.com/class/jcwd4786vss6ky?cid=571
 void printOutput(){
-	//char* finalOutput=malloc(total_pages*pgsize*(sizeof(int)+sizeof(char)));
+	char* finalOutput=malloc(total_pages*page_size*(sizeof(int)+sizeof(char)));
+    char* init=finalOutput; //contains the starting point of finalOutput pointer
 	for(int i=0;i<total_pages;i++){
 		if(i<total_pages-1){
 			if(out[i].data[out[i].size-1]==out[i+1].data[0]){ //Compare i'th output's last character with the i+1th output's first character
@@ -270,14 +273,20 @@ void printOutput(){
 				out[i].size--;
 			}
 		}
+		
 		for(int j=0;j<out[i].size;j++){
 			int num=out[i].count[j];
 			char character=out[i].data[j];
-			printf("%d%c\n",num,character);
+			*((int*)finalOutput)=num;
+			finalOutput+=sizeof(int);
+			*((char*)finalOutput)=character;
+            finalOutput+=sizeof(char);
+			//printf("%d%c\n",num,character);
 			//fwrite(&num,sizeof(int),1,stdout);
 			//fwrite(&character,sizeof(char),1,stdout);
 		}
 	}
+	fwrite(init,finalOutput-init,1,stdout);
 }
 
 void freeMemory(){
@@ -304,12 +313,19 @@ int main(int argc, char* argv[]){
 	}
 
 	//Initialize all the global Variables.
-	page_size = sysconf(_SC_PAGE_SIZE); //4096 bytes
+	//I took 4096 as page size but the program was running very slow,
+	//started trying out with huge random values, program execution
+	//decreased by atleast 1/4
+	page_size = 10000000;//sysconf(_SC_PAGE_SIZE); //4096 bytes
 	num_files=argc-1; //Number of files, needed for producer.
 	total_threads=get_nprocs(); //Number of processes consumer threads 
 	pages_per_file=malloc(sizeof(int)*num_files); //Pages per file.
+	
 	//files=malloc(sizeof(struct fd)*num_files);
-
+	//Initially I was re-allocing out everytime to increase the size,
+	//but it lead to a race condition where consumer tried to put compressed
+	//output into an unallocated space.
+    out=malloc(sizeof(struct output)* 512000*2); 
 	//Create producer thread to map all the files.
 	pthread_t pid,cid[total_threads];
 	pthread_create(&pid, NULL, producer, argv+1); //argv + 1 to skip argv[0].
