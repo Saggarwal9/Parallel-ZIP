@@ -221,6 +221,22 @@ struct output RLECompress(struct buffer temp){
 	return compressed;
 }
 
+
+//https://piazza.com/class/jcwd4786vss6ky?cid=571
+//You'll need some sort of variable to figure out where in the buffer you are in terms of bytes 
+//(i.e. where to add the next int or char). Each time you add an int to the buffer, 
+//you'll have to update that variable by 4, since an int is 4 bytes. Each time you add a char, 
+//you'll have to update the variable by 1 byte. At the end, the variable will also equal the size of the buffer. 
+//To use fwrite, you just need to pass in the buffer plus the size of the buffer, which is that variable.  
+/*
+// a simple example 
+char buffer[1000];
+
+int *p = &buffer[0];
+*p = 100;
+char *c = &buffer[4];
+*c = 'x';
+*/
 //Calculates the relative output position for the buffer object.
 int calculateOutputPosition(struct buffer temp){
 	int position=0;
